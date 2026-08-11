@@ -38,6 +38,16 @@ export const all = (name, filter = {}, options) =>
 export const one = async (name, filter = {}, options) =>
   (await col(name).findOne(filter, merge(options))) ?? null;
 
+export const ping = async () => {
+  try {
+    if (db === null) return false;
+    await db.command({ ping: 1 });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const hasCollection = async (name) => {
   if (db === null) throw new Error('database not connected');
   const found = await db.listCollections({ name }, { nameOnly: true }).toArray();

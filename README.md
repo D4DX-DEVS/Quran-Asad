@@ -66,6 +66,18 @@ flutter run --dart-define=MOQ_API_BASE_URL=https://your-host/api/v1
 On the Android emulator, `localhost` is the emulator itself — use
 `http://10.0.2.2:3000/api/v1`.
 
+## Health and rate limiting
+
+`GET /health` reports `200 {"status":"ok","database":"up"}` while MongoDB
+answers a ping, and `503 {"status":"degraded","database":"down"}` when it does
+not — so a dropped connection surfaces there rather than as failing routes.
+
+Every `/api/v1` route is rate limited per IP: 300 requests per 60 seconds by
+default, tunable with `RATE_LIMIT_MAX` and `RATE_LIMIT_WINDOW_MS`. Exceeding it
+returns `429 {"error":"too many requests"}`. Behind a proxy or load balancer,
+set `TRUST_PROXY` to the number of hops, otherwise every request is counted as
+coming from one client.
+
 ## API
 
 Everything is `GET`, and every route is mounted under `/api/v1`. Endpoints return
@@ -124,7 +136,13 @@ back to an empty name.
 
 ### Tajweed
 
-`/tajweed/words?surah=&verseFrom=&verseTo=` and `/tajweed/image-urls`.
+`/tajweed/words?surah=&verseFrom=&verseTo=` and
+`/tajweed/image-urls?limit=&offset=`.
+
+There is one tajweed row per word in the Qur'an (~77k), so `/tajweed/image-urls`
+is paged: `limit` defaults to and is capped at 5000, and `offset` walks the
+rest. The URLs it returns point at the DigitalOcean Spaces CDN that hosts the
+word images.
 
 ## What stayed in the app
 

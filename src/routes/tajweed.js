@@ -21,10 +21,29 @@ router.get(
   }),
 );
 
+// There is one row per word in the Qur'an (~77k), so the whole table is never
+// returned at once: `limit` caps a page and `offset` walks it.
+const MAX_IMAGE_URLS = 5000;
+
 router.get(
   '/tajweed/image-urls',
-  route(async (_req, res) => {
-    const rows = await all('tajweed_words', {}, { projection: { image_url: 1 } });
+  route(async (req, res) => {
+    const requested =
+      req.query.limit === undefined ? MAX_IMAGE_URLS : asInt(req.query.limit, 'limit');
+    const limit = Math.min(Math.max(requested, 0), MAX_IMAGE_URLS);
+    const offset =
+      req.query.offset === undefined ? 0 : Math.max(asInt(req.query.offset, 'offset'), 0);
+
+    const rows = await all(
+      'tajweed_words',
+      {},
+      {
+        projection: { image_url: 1 },
+        sort: { surah_no: 1, ayah_no: 1, word_pos: 1 },
+        skip: offset,
+        limit,
+      },
+    );
     res.json(rows.map((r) => r.image_url || '').filter((url) => url !== ''));
   }),
 );

@@ -3,6 +3,7 @@ import './dns.js';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import rateLimit from 'express-rate-limit';
 
 import surahs from './routes/surahs.js';
 import verses from './routes/verses.js';
@@ -11,17 +12,40 @@ import search from './routes/search.js';
 import content from './routes/content.js';
 import tajweed from './routes/tajweed.js';
 import mushaf from './routes/mushaf.js';
-import { connect, closeAll } from './db/index.js';
+import { connect, closeAll, ping } from './db/index.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
 
+// Behind a proxy (Render, Fly, nginx, …) the client IP arrives in
+// X-Forwarded-For; without this every request would rate-limit as one client.
+if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY));
+
 app.use(cors());
 app.use(morgan('dev'));
 
-app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+// Reports unhealthy when the database is unreachable, so a restart or an
+// alert is triggered by a dropped connection rather than by a dead route.
+app.get('/health', async (_req, res) => {
+  const database = await ping();
+  res.status(database ? 200 : 503).json({
+    status: database ? 'ok' : 'degraded',
+    database: database ? 'up' : 'down',
+  });
+});
 
 const api = express.Router();
+
+api.use(
+  rateLimit({
+    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
+    limit: Number(process.env.RATE_LIMIT_MAX ?? 300),
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    message: { error: 'too many requests' },
+  }),
+);
+
 api.use(surahs);
 api.use(verses);
 api.use(interpretations);

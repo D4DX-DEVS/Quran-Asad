@@ -1,8 +1,7 @@
 import { Router } from 'express';
-import { col, all, one } from '../db/index.js';
+import { col, all } from '../db/index.js';
 import { normalizeArabic, pad, contains } from '../search-text.js';
 import { asBool, asInt, requireQuery, route } from '../utils.js';
-import { interpretationRange } from './interpretations.js';
 
 const router = Router();
 
@@ -105,72 +104,138 @@ router.get(
     const limit = limitOf(req, 30);
 
     if (!asBool(req.query.malayalam)) {
-      const footnotes = await all(
-        'footnotes',
-        { search_text: q },
-        { projection: { surah_number: 1, footnote_number: 1, text: 1 }, limit },
-      );
-
-      // The correlated subquery that resolved each footnote's verse, one
-      // lookup per row.
+      // The correlated subquery that resolved each footnote's verse, run as one
+      // joined pipeline instead of a round trip per matched footnote.
       return res.json(
-        await Promise.all(
-          footnotes.map(async (row) => {
-            const verse = await one(
-              'verses',
-              {
-                surah_number: row.surah_number,
-                text: contains(`(${row.footnote_number})`),
+        await col('footnotes')
+          .aggregate([
+            { $match: { search_text: q } },
+            { $limit: limit },
+            {
+              $lookup: {
+                from: 'verses',
+                let: { surah: '$surah_number', marker: '$footnote_number' },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $and: [
+                          { $eq: ['$surah_number', '$$surah'] },
+                          {
+                            $gte: [
+                              {
+                                $indexOfCP: [
+                                  '$text',
+                                  { $concat: ['(', { $toString: '$$marker' }, ')'] },
+                                ],
+                              },
+                              0,
+                            ],
+                          },
+                        ],
+                      },
+                    },
+                  },
+                  { $limit: 1 },
+                  { $project: { _id: 0, verse_number: 1 } },
+                ],
+                as: 'verse',
               },
-              { projection: { verse_number: 1 } },
-            );
-            return { ...row, verse_number: verse?.verse_number ?? -1 };
-          }),
-        ),
+            },
+            {
+              $project: {
+                _id: 0,
+                surah_number: 1,
+                footnote_number: 1,
+                text: 1,
+                verse_number: {
+                  $ifNull: [{ $arrayElemAt: ['$verse.verse_number', 0] }, -1],
+                },
+              },
+            },
+          ])
+          .toArray(),
       );
     }
-
-    const footnotes = await all(
-      'malayalam_footnotes',
-      { search_content: q },
-      { projection: { id: 1, footnote_number: 1, content: 1 }, limit },
-    );
 
     // malayalam_footnotes has two numbering groups: rows where id ==
     // footnote_number belong to surahs 1-6 with globally unique [^N] markers,
     // and rows where id != footnote_number belong to surahs 7-114 where the
     // markers restart. The same footnote_number exists in both groups, so the
     // lookup must be constrained to the right group to resolve the verse.
-    const rows = await Promise.all(
-      footnotes.map(async ({ id, footnote_number, content }) => {
-        const group = id === footnote_number ? { $lte: 6 } : { $gte: 7 };
-        const verse = await one(
-          'malayalam_verses',
-          {
-            malayalam_translation: contains(`[^${footnote_number}]`),
-            surah_id: group,
+    const rows = await col('malayalam_footnotes')
+      .aggregate([
+        { $match: { search_content: q } },
+        { $limit: limit },
+        {
+          $lookup: {
+            from: 'malayalam_verses',
+            let: {
+              marker: '$footnote_number',
+              global: { $eq: ['$id', '$footnote_number'] },
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $and: [
+                      {
+                        $gte: [
+                          {
+                            $indexOfCP: [
+                              '$malayalam_translation',
+                              { $concat: ['[^', { $toString: '$$marker' }, ']'] },
+                            ],
+                          },
+                          0,
+                        ],
+                      },
+                      {
+                        $cond: [
+                          '$$global',
+                          { $lte: ['$surah_id', 6] },
+                          { $gte: ['$surah_id', 7] },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              },
+              { $sort: { surah_id: 1, verse_number: 1 } },
+              { $limit: 1 },
+              { $project: { _id: 0, surah_id: 1, verse_number: 1 } },
+            ],
+            as: 'verse',
           },
-          { projection: { surah_id: 1, verse_number: 1 }, sort: { surah_id: 1, verse_number: 1 } },
-        );
-        return {
-          footnote_number,
-          content,
-          surah_number: verse?.surah_id ?? -1,
-          verse_number: verse?.verse_number ?? -1,
-        };
-      }),
-    );
+        },
+        {
+          $project: {
+            _id: 0,
+            footnote_number: 1,
+            content: 1,
+            surah_number: { $ifNull: [{ $arrayElemAt: ['$verse.surah_id', 0] }, -1] },
+            verse_number: { $ifNull: [{ $arrayElemAt: ['$verse.verse_number', 0] }, -1] },
+          },
+        },
+      ])
+      .toArray();
 
     // Footnote numbers are stored globally but displayed per surah, using the
     // same offset the surah screen applies: display = global - surahMin + 1.
-    const surahMin = new Map();
+    // One grouped query covers every surah the results landed in.
+    const surahs = [...new Set(rows.map((r) => r.surah_number).filter((n) => n > 0))];
+    const mins = await col('malayalam_footnotes')
+      .aggregate([
+        { $match: { surah_number: { $in: surahs } } },
+        { $group: { _id: '$surah_number', min: { $min: '$footnote_number' } } },
+      ])
+      .toArray();
+    const surahMin = new Map(mins.map((m) => [m._id, m.min]));
+
     for (const row of rows) {
       if (row.surah_number > 0 && row.footnote_number > 0) {
-        if (!surahMin.has(row.surah_number)) {
-          const { min } = await interpretationRange(row.surah_number, true);
-          surahMin.set(row.surah_number, min === -1 ? row.footnote_number : min);
-        }
-        const display = row.footnote_number - surahMin.get(row.surah_number) + 1;
+        const min = surahMin.get(row.surah_number) ?? row.footnote_number;
+        const display = row.footnote_number - min + 1;
         if (display > 0) row.footnote_number = display;
       }
     }
