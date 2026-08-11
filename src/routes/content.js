@@ -1,18 +1,8 @@
 import { Router } from 'express';
-import { quranDb, all, one } from '../db/index.js';
+import { all, one, hasCollection } from '../db/index.js';
 import { asInt, asBool, notFound, route } from '../utils.js';
 
 const router = Router();
-
-// A handful of tables referenced by the Dart helpers (`contact_us`, `help`)
-// are not present in the shipped sqlite file; guard those queries instead
-// of letting them throw, mirroring the Dart helpers' try/catch-to-empty behavior.
-const tableExists = (name) =>
-  one(
-    quranDb,
-    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
-    name,
-  ) !== null;
 
 // ─── Prefaces ───
 // English: `surahs.introduction`. Malayalam: `malayalam_surahs.introduction`.
@@ -27,26 +17,21 @@ router.get(
 
 router.get(
   '/prefaces/:surahId',
-  route((req, res) => {
+  route(async (req, res) => {
     const surahId = asInt(req.params.surahId, 'surahId');
 
-    if (asBool(req.query.malayalam)) {
-      const row = one(
-        quranDb,
-        'SELECT introduction FROM malayalam_surahs WHERE chapter_number = ? LIMIT 1',
-        surahId,
-      );
-      if (!row || !row.introduction || row.introduction.trim() === '') return res.json([]);
-      return res.json([{ id: surahId, prefaceSubTitle: '', prefaceText: row.introduction, suraId: surahId }]);
-    }
+    const row = asBool(req.query.malayalam)
+      ? await one(
+          'malayalam_surahs',
+          { chapter_number: surahId },
+          { projection: { introduction: 1 } },
+        )
+      : await one('surahs', { number: surahId }, { projection: { introduction: 1 } });
 
-    const row = one(
-      quranDb,
-      'SELECT introduction FROM surahs WHERE number = ? LIMIT 1',
-      surahId,
-    );
     if (!row || !row.introduction || row.introduction.trim() === '') return res.json([]);
-    res.json([{ id: surahId, prefaceSubTitle: '', prefaceText: row.introduction, suraId: surahId }]);
+    res.json([
+      { id: surahId, prefaceSubTitle: '', prefaceText: row.introduction, suraId: surahId },
+    ]);
   }),
 );
 
@@ -54,18 +39,18 @@ router.get(
 
 router.get(
   '/appendices',
-  route((req, res) => {
-    const table = asBool(req.query.malayalam) ? 'malayalam_appendices' : 'appendices';
-    res.json(all(quranDb, `SELECT * FROM ${table} ORDER BY number ASC`));
+  route(async (req, res) => {
+    const collection = asBool(req.query.malayalam) ? 'malayalam_appendices' : 'appendices';
+    res.json(await all(collection, {}, { sort: { number: 1 } }));
   }),
 );
 
 router.get(
   '/appendices/:number',
-  route((req, res) => {
+  route(async (req, res) => {
     const number = asInt(req.params.number, 'number');
-    const table = asBool(req.query.malayalam) ? 'malayalam_appendices' : 'appendices';
-    const row = one(quranDb, `SELECT * FROM ${table} WHERE number = ? LIMIT 1`, number);
+    const collection = asBool(req.query.malayalam) ? 'malayalam_appendices' : 'appendices';
+    const row = await one(collection, { number });
     res.json(notFound(row, `appendix ${number} not found`));
   }),
 );
@@ -74,9 +59,8 @@ router.get(
 
 router.get(
   '/foreword',
-  route((_req, res) => {
-    const row = one(quranDb, 'SELECT * FROM foreword LIMIT 1');
-    res.json(row);
+  route(async (_req, res) => {
+    res.json(await one('foreword'));
   }),
 );
 
@@ -84,9 +68,8 @@ router.get(
 
 router.get(
   '/ml-preface',
-  route((_req, res) => {
-    const row = one(quranDb, 'SELECT * FROM malayalam_foreword LIMIT 1');
-    res.json(row);
+  route(async (_req, res) => {
+    res.json(await one('malayalam_foreword'));
   }),
 );
 
@@ -94,9 +77,9 @@ router.get(
 
 router.get(
   '/authors',
-  route((req, res) => {
-    const table = asBool(req.query.malayalam) ? 'malayalam_authors' : 'authors';
-    res.json(all(quranDb, `SELECT * FROM ${table} ORDER BY is_verified DESC, id ASC`));
+  route(async (req, res) => {
+    const collection = asBool(req.query.malayalam) ? 'malayalam_authors' : 'authors';
+    res.json(await all(collection, {}, { sort: { is_verified: -1, id: 1 } }));
   }),
 );
 
@@ -104,8 +87,8 @@ router.get(
 
 router.get(
   '/about-author',
-  route((_req, res) => {
-    res.json(all(quranDb, 'SELECT * FROM malayalam_about_translator'));
+  route(async (_req, res) => {
+    res.json(await all('malayalam_about_translator'));
   }),
 );
 
@@ -113,8 +96,8 @@ router.get(
 
 router.get(
   '/translator',
-  route((_req, res) => {
-    res.json(all(quranDb, 'SELECT * FROM translator'));
+  route(async (_req, res) => {
+    res.json(await all('translator'));
   }),
 );
 
@@ -122,8 +105,8 @@ router.get(
 
 router.get(
   '/works-of-reference',
-  route((_req, res) => {
-    res.json(all(quranDb, 'SELECT * FROM worksofreference ORDER BY is_verified DESC, id ASC'));
+  route(async (_req, res) => {
+    res.json(await all('worksofreference', {}, { sort: { is_verified: -1, id: 1 } }));
   }),
 );
 
@@ -131,30 +114,29 @@ router.get(
 
 router.get(
   '/contact',
-  route((req, res) => {
-    const table = asBool(req.query.malayalam)
+  route(async (req, res) => {
+    const collection = asBool(req.query.malayalam)
       ? 'malayalam_contact_us'
       : 'contact_us_content';
-    res.json(one(quranDb, `SELECT * FROM ${table} LIMIT 1`));
+    res.json(await one(collection));
   }),
 );
 
 router.get(
   '/contact/english',
-  route((_req, res) => {
-    const row = one(quranDb, 'SELECT * FROM contact_us_content LIMIT 1');
-    res.json(row);
+  route(async (_req, res) => {
+    res.json(await one('contact_us_content'));
   }),
 );
 
 router.get(
   '/contact/info',
-  route((_req, res) => {
-    // ContactDbHelper.getContactInfo() queries a `contact_us` table that is
-    // not present in the shipped db; the Dart code catches the error and
-    // returns an empty list.
-    if (!tableExists('contact_us')) return res.json([]);
-    res.json(all(quranDb, 'SELECT * FROM contact_us'));
+  route(async (_req, res) => {
+    // ContactDbHelper.getContactInfo() queries a `contact_us` table that was
+    // not present in the source sqlite file, so nothing was migrated for it;
+    // the Dart code catches the error and returns an empty list.
+    if (!(await hasCollection('contact_us'))) return res.json([]);
+    res.json(await all('contact_us'));
   }),
 );
 
@@ -162,11 +144,11 @@ router.get(
 
 router.get(
   '/help',
-  route((_req, res) => {
-    // HelpDbHelper.getHelpInfo() queries a `help` table that is not present
-    // in the shipped db; the Dart code catches the error and returns [].
-    if (!tableExists('help')) return res.json([]);
-    res.json(all(quranDb, 'SELECT * FROM help'));
+  route(async (_req, res) => {
+    // HelpDbHelper.getHelpInfo() queries a `help` table that was likewise not
+    // present in the source, so the Dart fallback of [] applies.
+    if (!(await hasCollection('help'))) return res.json([]);
+    res.json(await all('help'));
   }),
 );
 

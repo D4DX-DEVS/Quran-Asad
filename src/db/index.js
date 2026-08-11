@@ -1,29 +1,47 @@
-import { DatabaseSync } from 'node:sqlite';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { MongoClient } from 'mongodb';
 
-const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const dataDir = process.env.DATA_DIR ?? path.join(rootDir, 'data');
+const uri = process.env.MONGODB_URI;
+// Undefined falls back to the database named in the connection string.
+const dbName = process.env.MONGODB_DB;
 
-export const quranDb = new DatabaseSync(
-  path.join(dataDir, 'quran_asad_combined_nw.sqlite'),
-  { readOnly: true },
-);
+if (!uri) throw new Error('MONGODB_URI is not set');
 
-export const mushafDb = new DatabaseSync(path.join(dataDir, 'mushaf.db'), {
-  readOnly: true,
-});
+const client = new MongoClient(uri);
+let db = null;
 
-// node:sqlite rows are null-prototype objects; Express' JSON serializer needs plain objects.
-export const all = (db, sql, ...params) =>
-  db.prepare(sql).all(...params).map((row) => ({ ...row }));
-
-export const one = (db, sql, ...params) => {
-  const row = db.prepare(sql).get(...params);
-  return row ? { ...row } : null;
+export const connect = async () => {
+  await client.connect();
+  db = client.db(dbName);
+  return db;
 };
 
-export const closeAll = () => {
-  quranDb.close();
-  mushafDb.close();
+export const col = (name) => {
+  if (db === null) throw new Error('database not connected');
+  return db.collection(name);
 };
+
+// Every response drops Mongo's `_id` and the search columns the migration
+// precomputed; the API's JSON shape predates both and the clients do not
+// expect them.
+const hidden = { _id: 0, search_text: 0, search_arabic: 0, search_content: 0 };
+
+const merge = (options) => {
+  if (!options?.projection) return { ...options, projection: hidden };
+  // An explicit projection already names what it wants, so only `_id` needs
+  // suppressing — mixing the exclusions above into an inclusion is illegal.
+  return { ...options, projection: { _id: 0, ...options.projection } };
+};
+
+export const all = (name, filter = {}, options) =>
+  col(name).find(filter, merge(options)).toArray();
+
+export const one = async (name, filter = {}, options) =>
+  (await col(name).findOne(filter, merge(options))) ?? null;
+
+export const hasCollection = async (name) => {
+  if (db === null) throw new Error('database not connected');
+  const found = await db.listCollections({ name }, { nameOnly: true }).toArray();
+  return found.length > 0;
+};
+
+export const closeAll = () => client.close();

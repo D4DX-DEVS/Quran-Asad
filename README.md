@@ -6,18 +6,18 @@ sqlite file; it now fetches it from here.
 
 ## Requirements
 
-Node.js **22.5+** — the API reads sqlite through the built-in `node:sqlite`
-module, so there is no native build step and no database driver to install.
+Node.js **22.5+** and a MongoDB database. The content lives in MongoDB; the
+sqlite files it came from are only needed to run the one-off migration.
 
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env      # optional; PORT defaults to 3000
+cp .env.example .env      # set MONGODB_URI
 npm start                 # or: npm run dev  (watch mode)
 ```
 
-### Database files
+### Loading the content into MongoDB
 
 The two sqlite files live in `data/` and are gitignored (they total ~70 MB).
 Copy them from the Flutter app's assets:
@@ -27,9 +27,32 @@ cp ../message_of_quran/assets/db/quran_asad_combined_nw.sqlite data/
 cp ../message_of_quran/assets/db/DB.db data/mushaf.db
 ```
 
-Both are opened read-only. Point `DATA_DIR` at another directory to override.
+Then load them into the database named in `MONGODB_URI`:
 
-`npm run schema` prints every table with its columns and row count.
+```bash
+npm run migrate
+```
+
+This drops and rebuilds 24 collections (~121k documents) and creates their
+indexes, so it is safe to re-run. Point `DATA_DIR` at another directory to read
+the sqlite files from elsewhere.
+
+The searches match whole words against padded, punctuation-stripped, lowercased
+columns — `search_text`, `search_arabic`, `search_content` — that the migration
+precomputes and the API hides from responses. `src/search-text.js` holds the
+normalisation both sides share; changing it means re-running the migration.
+
+Once the data is loaded the server never touches sqlite again, so deployments do
+not need the `data/` directory at all.
+
+`npm run schema` prints every sqlite table with its columns and row count.
+
+### SRV lookups
+
+`mongodb+srv://` URIs need a DNS SRV lookup, and some home and ISP resolvers
+refuse them outright — the driver fails with `querySrv ECONNREFUSED`. Set
+`DNS_SERVERS=8.8.8.8,1.1.1.1` locally to work around it; leave it unset in
+production.
 
 ## Pointing the app at this API
 
@@ -46,8 +69,8 @@ On the Android emulator, `localhost` is the emulator itself — use
 ## API
 
 Everything is `GET`, and every route is mounted under `/api/v1`. Endpoints return
-**raw database rows**, so the Dart models parse the original column names
-unchanged. A `?malayalam=true` query parameter switches an endpoint to its
+**raw database rows** under their original sqlite column names, which the
+migration preserved, so the Dart models parse them unchanged. A `?malayalam=true` query parameter switches an endpoint to its
 Malayalam source table wherever both languages exist.
 
 ### Quran content
@@ -79,12 +102,14 @@ Malayalam source table wherever both languages exist.
 `/ml-preface`, `/authors`, `/about-author`, `/translator`,
 `/works-of-reference`, `/contact`, `/contact/english`.
 
-`/contact/info` and `/help` always return `[]` — their tables are not present in
-the shipped database, matching the app's existing behaviour.
+`/contact/info` and `/help` always return `[]` — their tables were not present in
+the source database, so nothing was migrated for them, matching the app's
+existing behaviour.
 
 ### Mushaf
 
-Page rendering and glyph data, backed by `mushaf.db`: `/mushaf/pages/meta`,
+Page rendering and glyph data, from the `mushaf_*` collections:
+`/mushaf/pages/meta`,
 `/mushaf/pages/:page/lines`, `/mushaf/pages/:page/meta`, `/mushaf/pages/ayas`,
 `/mushaf/surahs/glyphs`, `/mushaf/surahs/:surah/glyph`,
 `/mushaf/surahs/:surah/bismillah-glyph`, `/mushaf/bismillah-glyphs`,
@@ -93,9 +118,9 @@ Page rendering and glyph data, backed by `mushaf.db`: `/mushaf/pages/meta`,
 `/mushaf/ayas/:continuousAyaId/page`, `/mushaf/ayas/continuous-id`,
 `/mushaf/ayas/:continuousAyaId/info`.
 
-`/mushaf/juzs/:juz/name` always returns `{name: ""}`: the `t_juznames` table it
-reads is missing from the shipped mushaf database, which is why the app already
-falls back to an empty name.
+`/mushaf/juzs/:juz/name` always returns `{name: ""}`: the `t_juznames` table was
+missing from the shipped mushaf database, which is why the app already falls
+back to an empty name.
 
 ### Tajweed
 
@@ -111,11 +136,14 @@ shared content, so they are deliberately not served from here.
 
 ```
 src/
-  server.js        express app, route mounting, error handling
-  db/index.js      opens both sqlite files read-only
-  utils.js         param parsing, HttpError, async route wrapper
-  routes/          one module per resource group
+  server.js            express app, route mounting, error handling
+  db/index.js          mongo connection and find/findOne helpers
+  search-text.js       search normalisation shared with the migration
+  dns.js               optional DNS_SERVERS override for SRV lookups
+  utils.js             param parsing, HttpError, async route wrapper
+  routes/              one module per resource group
 scripts/
-  dump-schema.js   prints table/column/row-count listing
-data/              sqlite files (gitignored)
+  migrate-to-mongo.js  one-off sqlite → mongo load
+  dump-schema.js       prints sqlite table/column/row-count listing
+data/                  source sqlite files, migration only (gitignored)
 ```

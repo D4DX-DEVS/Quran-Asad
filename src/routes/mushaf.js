@@ -1,48 +1,57 @@
 import { Router } from 'express';
-import { mushafDb, all, one } from '../db/index.js';
+import { col, all, one } from '../db/index.js';
 import { asInt, notFound, route } from '../utils.js';
 
 const router = Router();
 
+// `SELECT suraid, data … GROUP BY suraid` took the value of an arbitrary row
+// per surah; picking the lowest `id` makes that deterministic.
+const glyphsByLine = (line) =>
+  col('mushaf_pages')
+    .aggregate([
+      { $match: { line } },
+      { $sort: { id: 1 } },
+      { $group: { _id: '$suraid', data: { $first: '$data' } } },
+      { $project: { _id: 0, suraid: '$_id', data: 1 } },
+      { $sort: { suraid: 1 } },
+    ])
+    .toArray();
+
 router.get(
   '/mushaf/pages/meta',
-  route((_req, res) => {
-    res.json(all(mushafDb, 'SELECT * FROM t_ayawise_page ORDER BY p_id'));
+  route(async (_req, res) => {
+    res.json(await all('mushaf_ayawise_page', {}, { sort: { p_id: 1 } }));
   }),
 );
 
 router.get(
   '/mushaf/pages/:page/lines',
-  route((req, res) => {
+  route(async (req, res) => {
     const page = asInt(req.params.page, 'page');
-    res.json(
-      all(mushafDb, 'SELECT * FROM t_MushafPages WHERE pageid=? ORDER BY id', page),
-    );
+    res.json(await all('mushaf_pages', { pageid: page }, { sort: { id: 1 } }));
   }),
 );
 
 router.get(
   '/mushaf/pages/:page/meta',
-  route((req, res) => {
+  route(async (req, res) => {
     const page = asInt(req.params.page, 'page');
-    const row = one(mushafDb, 'SELECT * FROM t_ayawise_page WHERE p_id=?', page);
+    const row = await one('mushaf_ayawise_page', { p_id: page });
     res.json(notFound(row, `page meta ${page} not found`));
   }),
 );
 
 router.get(
   '/mushaf/pages/ayas',
-  route((req, res) => {
+  route(async (req, res) => {
     const startAya = asInt(req.query.start, 'start');
     const endAya = asInt(req.query.end, 'end');
     if (startAya <= 0 || endAya < startAya) return res.json([]);
     res.json(
-      all(
-        mushafDb,
-        `SELECT aya_id, s_no, aya_no FROM t_aya
-         WHERE aya_id BETWEEN ? AND ? AND aya_no > 0 ORDER BY aya_id`,
-        startAya,
-        endAya,
+      await all(
+        'mushaf_aya',
+        { aya_id: { $gte: startAya, $lte: endAya }, aya_no: { $gt: 0 } },
+        { projection: { aya_id: 1, s_no: 1, aya_no: 1 }, sort: { aya_id: 1 } },
       ),
     );
   }),
@@ -50,24 +59,19 @@ router.get(
 
 router.get(
   '/mushaf/surahs/glyphs',
-  route((_req, res) => {
-    res.json(
-      all(
-        mushafDb,
-        'SELECT suraid, data FROM t_MushafPages WHERE line=-1 GROUP BY suraid ORDER BY suraid',
-      ),
-    );
+  route(async (_req, res) => {
+    res.json(await glyphsByLine(-1));
   }),
 );
 
 router.get(
   '/mushaf/surahs/:surah/glyph',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
-    const row = one(
-      mushafDb,
-      'SELECT data FROM t_MushafPages WHERE suraid=? AND line=-1 LIMIT 1',
-      surah,
+    const row = await one(
+      'mushaf_pages',
+      { suraid: surah, line: -1 },
+      { projection: { data: 1 } },
     );
     res.json({ data: row?.data ?? '' });
   }),
@@ -75,24 +79,19 @@ router.get(
 
 router.get(
   '/mushaf/bismillah-glyphs',
-  route((_req, res) => {
-    res.json(
-      all(
-        mushafDb,
-        'SELECT suraid, data FROM t_MushafPages WHERE line=0 GROUP BY suraid ORDER BY suraid',
-      ),
-    );
+  route(async (_req, res) => {
+    res.json(await glyphsByLine(0));
   }),
 );
 
 router.get(
   '/mushaf/surahs/:surah/bismillah-glyph',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
-    const row = one(
-      mushafDb,
-      'SELECT data FROM t_MushafPages WHERE suraid=? AND line=0 LIMIT 1',
-      surah,
+    const row = await one(
+      'mushaf_pages',
+      { suraid: surah, line: 0 },
+      { projection: { data: 1 } },
     );
     res.json({ data: row?.data ?? '' });
   }),
@@ -100,12 +99,15 @@ router.get(
 
 router.get(
   '/mushaf/juzs/first-pages',
-  route((_req, res) => {
+  route(async (_req, res) => {
     res.json(
-      all(
-        mushafDb,
-        'SELECT j_no, MIN(p_id) AS first_page FROM t_ayawise_page GROUP BY j_no ORDER BY j_no',
-      ),
+      await col('mushaf_ayawise_page')
+        .aggregate([
+          { $group: { _id: '$j_no', first_page: { $min: '$p_id' } } },
+          { $project: { _id: 0, j_no: '$_id', first_page: 1 } },
+          { $sort: { j_no: 1 } },
+        ])
+        .toArray(),
     );
   }),
 );
@@ -113,28 +115,23 @@ router.get(
 router.get(
   '/mushaf/juzs/:juz/name',
   route((req, res) => {
-    const juz = asInt(req.params.juz, 'juz');
-    // t_juznames is absent from the shipped mushaf.db copy; mirror the Dart
-    // repository's try/catch fallback of an empty name rather than erroring.
-    try {
-      const row = one(mushafDb, 'SELECT j_name FROM t_juznames WHERE j_no=?', juz);
-      res.json({ name: row?.j_name ?? '' });
-    } catch {
-      res.json({ name: '' });
-    }
+    asInt(req.params.juz, 'juz');
+    // Juz names lived in a `t_juznames` table absent from the shipped mushaf.db,
+    // so nothing was migrated for it; the Dart repository fell back to an empty
+    // name rather than erroring.
+    res.json({ name: '' });
   }),
 );
 
 router.get(
   '/mushaf/ayas/:continuousAyaId/page',
-  route((req, res) => {
+  route(async (req, res) => {
     const continuesAyaId = asInt(req.params.continuousAyaId, 'continuousAyaId');
     if (continuesAyaId <= 0) return res.json({ page: 0 });
-    const row = one(
-      mushafDb,
-      'SELECT p_id FROM t_ayawise_page WHERE s_aya<=? AND e_aya>=? LIMIT 1',
-      continuesAyaId,
-      continuesAyaId,
+    const row = await one(
+      'mushaf_ayawise_page',
+      { s_aya: { $lte: continuesAyaId }, e_aya: { $gte: continuesAyaId } },
+      { projection: { p_id: 1 } },
     );
     res.json({ page: row?.p_id ?? 0 });
   }),
@@ -142,14 +139,13 @@ router.get(
 
 router.get(
   '/mushaf/ayas/continuous-id',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.query.surah, 'surah');
     const aya = asInt(req.query.aya, 'aya');
-    const row = one(
-      mushafDb,
-      'SELECT aya_id FROM t_aya WHERE s_no=? AND aya_no=? LIMIT 1',
-      surah,
-      aya,
+    const row = await one(
+      'mushaf_aya',
+      { s_no: surah, aya_no: aya },
+      { projection: { aya_id: 1 } },
     );
     res.json({ ayaId: row?.aya_id ?? 0 });
   }),
@@ -157,42 +153,53 @@ router.get(
 
 router.get(
   '/mushaf/surahs/:surah/first-page',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
-    const row = one(
-      mushafDb,
-      `SELECT MIN(p.p_id) AS first_page
-       FROM t_ayawise_page p
-       JOIN t_aya a ON a.aya_id BETWEEN p.s_aya AND p.e_aya
-       WHERE a.s_no=? AND a.aya_no>0`,
-      surah,
-    );
-    res.json({ page: row?.first_page ?? 1 });
+
+    // The sqlite version joined every aya of the surah against the page ranges
+    // and took the lowest page. Aya ids run contiguously within a surah, so
+    // matching the pages that overlap [min, max] finds the same set.
+    const [bounds] = await col('mushaf_aya')
+      .aggregate([
+        { $match: { s_no: surah, aya_no: { $gt: 0 } } },
+        { $group: { _id: null, min: { $min: '$aya_id' }, max: { $max: '$aya_id' } } },
+      ])
+      .toArray();
+
+    if (!bounds) return res.json({ page: 1 });
+
+    const [page] = await col('mushaf_ayawise_page')
+      .aggregate([
+        { $match: { s_aya: { $lte: bounds.max }, e_aya: { $gte: bounds.min } } },
+        { $group: { _id: null, first_page: { $min: '$p_id' } } },
+      ])
+      .toArray();
+
+    res.json({ page: page?.first_page ?? 1 });
   }),
 );
 
 router.get(
   '/mushaf/surahs/:surah/continuous-aya-ids',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
-    res.json(
-      all(
-        mushafDb,
-        'SELECT aya_id FROM t_aya WHERE s_no=? AND aya_no > 0 ORDER BY aya_no',
-        surah,
-      ).map((r) => r.aya_id),
+    const rows = await all(
+      'mushaf_aya',
+      { s_no: surah, aya_no: { $gt: 0 } },
+      { projection: { aya_id: 1 }, sort: { aya_no: 1 } },
     );
+    res.json(rows.map((r) => r.aya_id));
   }),
 );
 
 router.get(
   '/mushaf/ayas/:continuousAyaId/info',
-  route((req, res) => {
+  route(async (req, res) => {
     const continuousAyaId = asInt(req.params.continuousAyaId, 'continuousAyaId');
-    const row = one(
-      mushafDb,
-      'SELECT s_no, aya_no FROM t_aya WHERE aya_id=? LIMIT 1',
-      continuousAyaId,
+    const row = await one(
+      'mushaf_aya',
+      { aya_id: continuousAyaId },
+      { projection: { s_no: 1, aya_no: 1 } },
     );
     res.json({ suraNo: row?.s_no ?? 1, ayaNo: row?.aya_no ?? 1 });
   }),

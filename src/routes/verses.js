@@ -1,55 +1,40 @@
 import { Router } from 'express';
-import { quranDb, all, one } from '../db/index.js';
+import { all, one } from '../db/index.js';
+import { contains } from '../search-text.js';
 import { asInt, asBool, notFound, route } from '../utils.js';
 
 const router = Router();
 
 router.get(
   '/surahs/:surah/verses',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
 
     if (asBool(req.query.malayalam)) {
       return res.json(
-        all(
-          quranDb,
-          `SELECT * FROM malayalam_verses
-           WHERE surah_id = ? AND verse_number IS NOT NULL
-           ORDER BY verse_number ASC`,
-          surah,
+        await all(
+          'malayalam_verses',
+          { surah_id: surah, verse_number: { $ne: null } },
+          { sort: { verse_number: 1 } },
         ),
       );
     }
 
     res.json(
-      all(
-        quranDb,
-        'SELECT * FROM verses WHERE surah_number = ? ORDER BY verse_number ASC',
-        surah,
-      ),
+      await all('verses', { surah_number: surah }, { sort: { verse_number: 1 } }),
     );
   }),
 );
 
 router.get(
   '/surahs/:surah/verses/:verse',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
     const verse = asInt(req.params.verse, 'verse');
 
     const row = asBool(req.query.malayalam)
-      ? one(
-          quranDb,
-          'SELECT * FROM malayalam_verses WHERE surah_id = ? AND verse_number = ? LIMIT 1',
-          surah,
-          verse,
-        )
-      : one(
-          quranDb,
-          'SELECT * FROM verses WHERE surah_number = ? AND verse_number = ? LIMIT 1',
-          surah,
-          verse,
-        );
+      ? await one('malayalam_verses', { surah_id: surah, verse_number: verse })
+      : await one('verses', { surah_number: surah, verse_number: verse });
 
     res.json(notFound(row, `verse ${surah}:${verse} not found`));
   }),
@@ -57,25 +42,18 @@ router.get(
 
 router.get(
   '/surahs/:surah/arabic',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
-    res.json(
-      all(quranDb, 'SELECT * FROM quranayas WHERE suraid = ? ORDER BY ayaid ASC', surah),
-    );
+    res.json(await all('quranayas', { suraid: surah }, { sort: { ayaid: 1 } }));
   }),
 );
 
 router.get(
   '/surahs/:surah/arabic/:verse',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
     const verse = asInt(req.params.verse, 'verse');
-    const row = one(
-      quranDb,
-      'SELECT * FROM quranayas WHERE suraid = ? AND ayaid = ? LIMIT 1',
-      surah,
-      verse,
-    );
+    const row = await one('quranayas', { suraid: surah, ayaid: verse });
     res.json(notFound(row, `arabic verse ${surah}:${verse} not found`));
   }),
 );
@@ -84,31 +62,25 @@ router.get(
 // `(N)` in the Asad text, `[^N]` in the Malayalam text.
 router.get(
   '/surahs/:surah/footnotes/:footnote/verse-numbers',
-  route((req, res) => {
+  route(async (req, res) => {
     const surah = asInt(req.params.surah, 'surah');
     const footnote = asInt(req.params.footnote, 'footnote');
     if (footnote <= 0) return res.json([]);
 
     if (asBool(req.query.malayalam)) {
-      const rows = all(
-        quranDb,
-        `SELECT verse_number FROM malayalam_verses
-         WHERE surah_id = ? AND malayalam_translation LIKE ?
-         ORDER BY verse_number ASC`,
-        surah,
-        `%[^${footnote}]%`,
+      const rows = await all(
+        'malayalam_verses',
+        { surah_id: surah, malayalam_translation: contains(`[^${footnote}]`) },
+        { projection: { verse_number: 1 }, sort: { verse_number: 1 } },
       );
       const numbers = rows.map((r) => r.verse_number).filter((n) => n > 0);
       return res.json(numbers.length > 0 ? numbers : [footnote]);
     }
 
-    const rows = all(
-      quranDb,
-      `SELECT verse_number FROM verses
-       WHERE surah_number = ? AND text LIKE ?
-       ORDER BY verse_number ASC`,
-      surah,
-      `%(${footnote})%`,
+    const rows = await all(
+      'verses',
+      { surah_number: surah, text: contains(`(${footnote})`) },
+      { projection: { verse_number: 1 }, sort: { verse_number: 1 } },
     );
     res.json(rows.map((r) => r.verse_number).filter((n) => n > 0));
   }),

@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import './dns.js';
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
@@ -10,7 +11,7 @@ import search from './routes/search.js';
 import content from './routes/content.js';
 import tajweed from './routes/tajweed.js';
 import mushaf from './routes/mushaf.js';
-import { closeAll } from './db/index.js';
+import { connect, closeAll } from './db/index.js';
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -38,14 +39,16 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: err.message ?? 'internal server error' });
 });
 
+await connect();
+
 const server = app.listen(port, () => {
   console.log(`MOQ backend listening on http://localhost:${port}`);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
-    server.close(() => {
-      closeAll();
+    server.close(async () => {
+      await closeAll();
       process.exit(0);
     });
   });

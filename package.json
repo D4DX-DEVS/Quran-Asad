@@ -11,12 +11,14 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "schema": "node scripts/dump-schema.js"
+    "schema": "node scripts/dump-schema.js",
+    "migrate": "node scripts/migrate-to-mongo.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
+    "mongodb": "^7.5.0",
     "morgan": "^1.10.0"
   }
 }
