@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+
+# Database files are large binaries copied from the Flutter app's assets.
+data/*.sqlite
+data/*.db
+data/*.db-wal
+data/*.db-shm

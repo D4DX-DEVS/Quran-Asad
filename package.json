@@ -1,0 +1,22 @@
+{
+  "name": "moq-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "REST API backend for the Message of the Quran app",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "schema": "node scripts/dump-schema.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "morgan": "^1.10.0"
+  }
+}
