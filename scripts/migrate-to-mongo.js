@@ -20,6 +20,7 @@ import {
   stripFootnotePunctuation,
   pad,
 } from '../src/search-text.js';
+import { repairVerseText } from '../src/text-repairs.js';
 
 const dataDir = process.env.DATA_DIR ?? 'data';
 const uri = process.env.MONGODB_URI;
@@ -41,7 +42,10 @@ const QURAN_TABLES = [
   {
     table: 'verses',
     indexes: [{ surah_number: 1, verse_number: 1 }],
-    transform: (row) => ({ ...row, search_text: pad(stripPunctuation(row.text)) }),
+    transform: (row) => {
+      const text = repairVerseText(row.surah_number, row.verse_number, row.text);
+      return { ...row, text, search_text: pad(stripPunctuation(text)) };
+    },
   },
   {
     table: 'malayalam_verses',
