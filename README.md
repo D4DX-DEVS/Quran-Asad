@@ -57,6 +57,21 @@ normalisation both sides share; changing it means re-running the migration.
 Once the data is loaded the server never touches sqlite again, so deployments do
 not need the `data/` directory at all.
 
+### Source corrections
+
+`src/text-repairs.js` lists a handful of faults in the source data that the
+migration corrects on the way in — scanning damage in four verses, and one
+wrong ayah count. Each carries the evidence that fixes its reading, so none of
+them is an editorial judgement. Run them against an already-loaded database
+with:
+
+```bash
+node scripts/repair-verses.js          # report what would change
+node scripts/repair-verses.js --write  # apply
+```
+
+It is idempotent, and recomputes `search_text` for any verse it edits.
+
 `npm run schema` prints every sqlite table with its columns and row count.
 
 ### Images on DigitalOcean Spaces
@@ -204,6 +219,7 @@ src/
   routes/              one module per resource group
 scripts/
   migrate-to-mongo.js  one-off sqlite/json → mongo load
+  repair-verses.js     applies src/text-repairs.js to a loaded database
   upload-images.js     uploads app images to DigitalOcean Spaces
   dump-schema.js       prints sqlite table/column/row-count listing
 data/                  migration sources, gitignored

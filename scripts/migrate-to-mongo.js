@@ -20,7 +20,7 @@ import {
   stripFootnotePunctuation,
   pad,
 } from '../src/search-text.js';
-import { repairVerseText } from '../src/text-repairs.js';
+import { repairVerseText, repairSurahRow } from '../src/text-repairs.js';
 
 const dataDir = process.env.DATA_DIR ?? 'data';
 const uri = process.env.MONGODB_URI;
@@ -35,7 +35,7 @@ if (!uri) {
 // Each entry: the sqlite table, the Mongo collection it becomes, the indexes to
 // build, and an optional row transform that precomputes search columns.
 const QURAN_TABLES = [
-  { table: 'surahs', indexes: [{ number: 1 }] },
+  { table: 'surahs', indexes: [{ number: 1 }], transform: repairSurahRow },
   { table: 'malayalam_surahs', indexes: [{ chapter_number: 1 }] },
   { table: 'juzzs', indexes: [{ custom_id: 1 }] },
   { table: 'hizbs', indexes: [{ custom_id: 1 }] },

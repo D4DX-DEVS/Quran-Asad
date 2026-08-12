@@ -12,7 +12,7 @@ import '../src/dns.js';
 import { MongoClient } from 'mongodb';
 
 import { pad, stripPunctuation } from '../src/search-text.js';
-import { VERSE_REPAIRS } from '../src/text-repairs.js';
+import { VERSE_REPAIRS, SURAH_REPAIRS } from '../src/text-repairs.js';
 
 const write = process.argv.includes('--write');
 const uri = process.env.MONGODB_URI;
@@ -23,7 +23,8 @@ if (!uri) {
 
 const client = new MongoClient(uri);
 await client.connect();
-const verses = client.db(process.env.MONGODB_DB).collection('verses');
+const db = client.db(process.env.MONGODB_DB);
+const verses = db.collection('verses');
 
 let changed = 0;
 let already = 0;
@@ -55,6 +56,31 @@ for (const r of VERSE_REPAIRS) {
       { _id: doc._id },
       { $set: { text, search_text: pad(stripPunctuation(text)) } },
     );
+  }
+  changed += 1;
+}
+
+for (const r of SURAH_REPAIRS) {
+  const doc = await db.collection('surahs').findOne(
+    { number: r.surah },
+    { projection: { _id: 1, [r.field]: 1 } },
+  );
+
+  if (!doc) {
+    console.log(`surah ${r.surah}  NOT FOUND`);
+    missing += 1;
+    continue;
+  }
+  if (doc[r.field] !== r.from) {
+    const done = doc[r.field] === r.to;
+    console.log(`surah ${r.surah}  ${r.field} is ${doc[r.field]} — ${done ? 'already repaired' : 'unexpected value, skipped'}`);
+    already += 1;
+    continue;
+  }
+
+  console.log(`surah ${r.surah}  ${r.field}: ${r.from} -> ${r.to}`);
+  if (write) {
+    await db.collection('surahs').updateOne({ _id: doc._id }, { $set: { [r.field]: r.to } });
   }
   changed += 1;
 }
