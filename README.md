@@ -19,12 +19,24 @@ npm start                 # or: npm run dev  (watch mode)
 
 ### Loading the content into MongoDB
 
-The two sqlite files live in `data/` and are gitignored (they total ~70 MB).
-Copy them from the Flutter app's assets:
+The migration reads three source files from `data/`, all gitignored (~75 MB):
+
+| `data/` file | Was |
+|---|---|
+| `quran_asad_combined_nw.sqlite` | the app's bundled content database |
+| `mushaf.db` | the app's `assets/db/DB.db` |
+| `quran_tajweed_complete.json` | the app's bundled Tajweed markup |
+
+The app no longer ships any of them — they were deleted once this API took over,
+so restore them from its git history rather than copying from `assets/`:
 
 ```bash
-cp ../message_of_quran/assets/db/quran_asad_combined_nw.sqlite data/
-cp ../message_of_quran/assets/db/DB.db data/mushaf.db
+app=../message_of_quran
+rev=$(git -C $app rev-list -1 HEAD -- assets/db/DB.db)
+git -C $app show $rev:assets/db/quran_asad_combined_nw.sqlite > data/quran_asad_combined_nw.sqlite
+git -C $app show $rev:assets/db/DB.db > data/mushaf.db
+git -C $app show $rev:assets/db/quran_tajweed_data/output/quran_tajweed_complete.json \
+  > data/quran_tajweed_complete.json
 ```
 
 Then load them into the database named in `MONGODB_URI`:
@@ -33,9 +45,9 @@ Then load them into the database named in `MONGODB_URI`:
 npm run migrate
 ```
 
-This drops and rebuilds 24 collections (~121k documents) and creates their
-indexes, so it is safe to re-run. Point `DATA_DIR` at another directory to read
-the sqlite files from elsewhere.
+This drops and rebuilds 26 collections (~128k documents) and creates their
+indexes, so it is safe to re-run. A missing tajweed JSON is skipped rather than
+fatal. Point `DATA_DIR` at another directory to read the sources from elsewhere.
 
 The searches match whole words against padded, punctuation-stripped, lowercased
 columns — `search_text`, `search_arabic`, `search_content` — that the migration
@@ -46,6 +58,25 @@ Once the data is loaded the server never touches sqlite again, so deployments do
 not need the `data/` directory at all.
 
 `npm run schema` prints every sqlite table with its columns and row count.
+
+### Images on DigitalOcean Spaces
+
+Large photos are served from the CDN instead of being bundled in the app. To
+publish more:
+
+```bash
+node scripts/upload-images.js path/to/image.png path/to/folder
+```
+
+Files land at `<DO_SPACES_FOLDER>/images/<basename>`, public and immutably
+cached, and the command prints the CDN URL to reference from
+`ApiConstants.imageCdnBaseUrl`. It needs `DO_SPACES_KEY`, `DO_SPACES_SECRET`,
+`DO_SPACES_ENDPOINT` and `DO_SPACES_BUCKET`; only image files are uploaded, so
+pointing it at a directory will not sweep up fonts or data.
+
+Splash screens and logos must stay bundled — they are drawn before any network
+request exists — and each photo keeps a small bundled thumbnail so a blurred
+preview shows while the CDN copy loads, and offline.
 
 ### SRV lookups
 
@@ -128,16 +159,24 @@ Page rendering and glyph data, from the `mushaf_*` collections:
 `/mushaf/surahs/:surah/first-page`, `/mushaf/surahs/:surah/continuous-aya-ids`,
 `/mushaf/juzs/first-pages`, `/mushaf/juzs/:juz/name`,
 `/mushaf/ayas/:continuousAyaId/page`, `/mushaf/ayas/continuous-id`,
-`/mushaf/ayas/:continuousAyaId/info`.
+`/mushaf/ayas/:continuousAyaId/info`, `/mushaf/font-zips`.
 
 `/mushaf/juzs/:juz/name` always returns `{name: ""}`: the `t_juznames` table was
 missing from the shipped mushaf database, which is why the app already falls
 back to an empty name.
 
+`/mushaf/font-zips` lists the mushaf font packs still to download. Serving it
+here is what let the app drop the 15.4 MB `DB.db` asset, which existed only for
+that one query.
+
 ### Tajweed
 
-`/tajweed/words?surah=&verseFrom=&verseTo=` and
+`/tajweed/words?surah=&verseFrom=&verseTo=`, `/tajweed/html?surah=` and
 `/tajweed/image-urls?limit=&offset=`.
+
+`/tajweed/html` returns the colour-coded Tajweed markup for one surah. It used
+to be a 5.5 MB JSON bundled in the app; the app now fetches the surah it is
+showing.
 
 There is one tajweed row per word in the Qur'an (~77k), so `/tajweed/image-urls`
 is paged: `limit` defaults to and is capped at 5000, and `offset` walks the
@@ -161,7 +200,8 @@ src/
   utils.js             param parsing, HttpError, async route wrapper
   routes/              one module per resource group
 scripts/
-  migrate-to-mongo.js  one-off sqlite → mongo load
+  migrate-to-mongo.js  one-off sqlite/json → mongo load
+  upload-images.js     uploads app images to DigitalOcean Spaces
   dump-schema.js       prints sqlite table/column/row-count listing
-data/                  source sqlite files, migration only (gitignored)
+data/                  migration sources, gitignored
 ```

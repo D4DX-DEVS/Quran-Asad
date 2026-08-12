@@ -17,6 +17,19 @@ const glyphsByLine = (line) =>
     ])
     .toArray();
 
+// The mushaf fonts are downloaded as zips; this is the list still to fetch.
+// `f0` is the sentinel for "no font", and fontstatus 0 means not yet bundled.
+router.get(
+  '/mushaf/font-zips',
+  route(async (_req, res) => {
+    const names = await col('mushaf_linewise_page').distinct('fontzip', {
+      fontstatus: 0,
+      fontzip: { $ne: 'f0' },
+    });
+    res.json(names.filter((name) => name != null).map(String).sort());
+  }),
+);
+
 router.get(
   '/mushaf/pages/meta',
   route(async (_req, res) => {

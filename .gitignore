@@ -2,8 +2,10 @@ node_modules/
 .env
 *.log
 
-# Database files are large binaries copied from the Flutter app's assets.
+# Migration sources copied from the Flutter app's assets — large, and the data
+# lives in MongoDB once loaded.
 data/*.sqlite
 data/*.db
 data/*.db-wal
 data/*.db-shm
+data/*.json

@@ -10,6 +10,7 @@
 import 'dotenv/config';
 import '../src/dns.js';
 import path from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { MongoClient } from 'mongodb';
 
@@ -102,6 +103,13 @@ const MUSHAF_TABLES = [
     collection: 'mushaf_aya',
     indexes: [{ aya_id: 1 }, { s_no: 1, aya_no: 1 }],
   },
+  {
+    // Only the font-zip columns are read, but the table is 604 rows, so it is
+    // copied whole rather than reshaped.
+    table: 't_linewise_page',
+    collection: 'mushaf_linewise_page',
+    indexes: [{ fontstatus: 1, fontzip: 1 }],
+  },
 ];
 
 const BATCH = 2000;
@@ -127,6 +135,44 @@ const copyTable = async (sqlite, mongo, spec) => {
   return docs.length;
 };
 
+// The colour-coded Tajweed data ships as one ~5.5 MB JSON keyed by surah, each
+// holding a list of verses. It becomes one document per verse so a screen can
+// fetch a single surah instead of the whole book.
+const copyTajweedHtml = async (mongo) => {
+  const file = path.join(dataDir, 'quran_tajweed_complete.json');
+  if (!existsSync(file)) {
+    console.log('tajweed_html                  skipped (source JSON not in data/)');
+    return 0;
+  }
+
+  const collection = mongo.collection('tajweed_html');
+  await collection.drop().catch(() => {});
+
+  const source = JSON.parse(readFileSync(file, 'utf8'));
+  const docs = [];
+  for (const surah of Object.values(source)) {
+    for (const verse of surah?.verses ?? []) {
+      const { verse_key: verseKey, text_tajweed_html: html } = verse;
+      if (typeof verseKey !== 'string' || typeof html !== 'string') continue;
+      const [surahNumber, verseNumber] = verseKey.split(':').map(Number);
+      docs.push({
+        surah_number: surahNumber,
+        verse_number: verseNumber,
+        verse_key: verseKey,
+        text_tajweed_html: html,
+      });
+    }
+  }
+
+  for (let i = 0; i < docs.length; i += BATCH) {
+    await collection.insertMany(docs.slice(i, i + BATCH), { ordered: false });
+  }
+  await collection.createIndex({ surah_number: 1, verse_number: 1 });
+
+  console.log(`${'tajweed_html'.padEnd(28)} ${String(docs.length).padStart(6)} docs`);
+  return docs.length;
+};
+
 const client = new MongoClient(uri);
 await client.connect();
 const mongo = client.db(dbName);
@@ -141,6 +187,8 @@ for (const [file, specs] of [
   for (const spec of specs) total += await copyTable(sqlite, mongo, spec);
   sqlite.close();
 }
+
+total += await copyTajweedHtml(mongo);
 
 console.log(`\ndone — ${total} documents`);
 await client.close();
