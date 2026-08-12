@@ -4,25 +4,13 @@ import { asInt, requireQuery, route } from '../utils.js';
 
 const router = Router();
 
-router.get(
-  '/tajweed/words',
-  route(async (req, res) => {
-    const surah = asInt(requireQuery(req, 'surah'), 'surah');
-    const verseFrom = asInt(requireQuery(req, 'verseFrom'), 'verseFrom');
-    const verseTo = asInt(requireQuery(req, 'verseTo'), 'verseTo');
-
-    res.json(
-      await all(
-        'tajweed_words',
-        { surah_no: surah, ayah_no: { $gte: verseFrom, $lte: verseTo } },
-        { sort: { ayah_no: 1, word_pos: 1 } },
-      ),
-    );
-  }),
-);
-
-// Colour-coded Tajweed markup, one document per verse. Fetched a surah at a
+// Colour-coded Tajweed markup, one document per verse, fetched a surah at a
 // time — the whole book is ~5.5 MB, which is what this replaced.
+//
+// This is the only Tajweed source now. The older renderer drew one CDN-hosted
+// image per word, backed by a 77k-row table and served from /tajweed/words and
+// /tajweed/image-urls; both were dropped along with the app code that had
+// already stopped calling them.
 router.get(
   '/tajweed/html',
   route(async (req, res) => {
@@ -37,33 +25,6 @@ router.get(
         },
       ),
     );
-  }),
-);
-
-// There is one row per word in the Qur'an (~77k), so the whole table is never
-// returned at once: `limit` caps a page and `offset` walks it.
-const MAX_IMAGE_URLS = 5000;
-
-router.get(
-  '/tajweed/image-urls',
-  route(async (req, res) => {
-    const requested =
-      req.query.limit === undefined ? MAX_IMAGE_URLS : asInt(req.query.limit, 'limit');
-    const limit = Math.min(Math.max(requested, 0), MAX_IMAGE_URLS);
-    const offset =
-      req.query.offset === undefined ? 0 : Math.max(asInt(req.query.offset, 'offset'), 0);
-
-    const rows = await all(
-      'tajweed_words',
-      {},
-      {
-        projection: { image_url: 1 },
-        sort: { surah_no: 1, ayah_no: 1, word_pos: 1 },
-        skip: offset,
-        limit,
-      },
-    );
-    res.json(rows.map((r) => r.image_url || '').filter((url) => url !== ''));
   }),
 );
 

@@ -71,7 +71,6 @@ const QURAN_TABLES = [
       search_content: pad(stripFootnotePunctuation(row.content)),
     }),
   },
-  { table: 'tajweed_words', indexes: [{ surah_no: 1, ayah_no: 1, word_pos: 1 }] },
   { table: 'appendices', indexes: [{ number: 1 }] },
   { table: 'malayalam_appendices', indexes: [{ number: 1 }] },
   { table: 'foreword', indexes: [] },

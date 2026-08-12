@@ -45,7 +45,7 @@ Then load them into the database named in `MONGODB_URI`:
 npm run migrate
 ```
 
-This drops and rebuilds 26 collections (~128k documents) and creates their
+This drops and rebuilds 25 collections (~50k documents) and creates their
 indexes, so it is safe to re-run. A missing tajweed JSON is skipped rather than
 fatal. Point `DATA_DIR` at another directory to read the sources from elsewhere.
 
@@ -171,12 +171,15 @@ that one query.
 
 ### Tajweed
 
-`/tajweed/words?surah=&verseFrom=&verseTo=`, `/tajweed/html?surah=` and
-`/tajweed/image-urls?limit=&offset=`.
+`/tajweed/html?surah=` returns the colour-coded Tajweed markup for one surah,
+as `verse_key` / `text_tajweed_html` pairs. It used to be a 5.5 MB JSON bundled
+in the app; the app now fetches the surah it is showing, and the rule colours
+stay hardcoded in the client.
 
-`/tajweed/html` returns the colour-coded Tajweed markup for one surah. It used
-to be a 5.5 MB JSON bundled in the app; the app now fetches the surah it is
-showing.
+This is the only Tajweed source. An earlier renderer drew one CDN-hosted image
+per word from a 77k-row table, behind `/tajweed/words` and
+`/tajweed/image-urls`; the app had already stopped calling them, so both routes
+and the `tajweed_words` collection were dropped.
 
 There is one tajweed row per word in the Qur'an (~77k), so `/tajweed/image-urls`
 is paged: `limit` defaults to and is capped at 5000, and `offset` walks the
