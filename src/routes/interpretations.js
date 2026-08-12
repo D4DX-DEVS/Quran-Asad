@@ -4,7 +4,33 @@ import { asInt, asBool, route } from '../utils.js';
 
 const router = Router();
 
+const MALAYALAM_MARKER = /\[\^?(\d+)\]/g;
+
 export const interpretationRange = async (surah, malayalam) => {
+  // Malayalam footnotes are numbered per surah, but surah 1 also carries the
+  // translator's introduction notes (numbers 1-5) that no verse references and
+  // nothing displays — its verse notes are 6-9, matching Asad's 1-4. Deriving
+  // the range from the markers actually present in the verses skips them. Every
+  // other surah starts at 1 either way, so this only changes surah 1.
+  if (malayalam) {
+    const verses = await all(
+      'malayalam_verses',
+      { surah_id: surah },
+      { projection: { malayalam_translation: 1 } },
+    );
+
+    const numbers = [];
+    for (const verse of verses) {
+      for (const [, n] of (verse.malayalam_translation ?? '').matchAll(MALAYALAM_MARKER)) {
+        numbers.push(Number(n));
+      }
+    }
+
+    if (numbers.length > 0) {
+      return { min: Math.min(...numbers), max: Math.max(...numbers) };
+    }
+  }
+
   const collection = malayalam ? 'malayalam_footnotes' : 'footnotes';
   const [row] = await col(collection)
     .aggregate([
