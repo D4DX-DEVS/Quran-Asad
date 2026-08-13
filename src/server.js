@@ -14,8 +14,14 @@ import tajweed from './routes/tajweed.js';
 import mushaf from './routes/mushaf.js';
 import { connect, closeAll, ping } from './db/index.js';
 
-// Fails here, before anything binds, when the environment is incomplete.
-assertServerConfig();
+// Stops here, before anything binds, when the environment is incomplete. The
+// stack trace is dropped: the message alone is what a deployment log needs.
+try {
+  assertServerConfig();
+} catch (e) {
+  console.error(`\n  Configuration error: ${e.message}\n`);
+  process.exit(1);
+}
 
 const app = express();
 const port = config.port;
