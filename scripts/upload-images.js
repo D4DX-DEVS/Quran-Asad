@@ -6,31 +6,27 @@
 // Files land under `<DO_SPACES_FOLDER>/images/<basename>` and are made public,
 // so the app can fetch them without credentials. Re-running overwrites.
 
-import 'dotenv/config';
 import path from 'node:path';
 import { readFileSync, statSync, readdirSync } from 'node:fs';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const {
-  DO_SPACES_KEY: accessKeyId,
-  DO_SPACES_SECRET: secretAccessKey,
-  DO_SPACES_ENDPOINT: endpoint,
-  DO_SPACES_CDN_ENDPOINT: cdnEndpoint,
-  DO_SPACES_BUCKET: bucket,
-  DO_SPACES_FOLDER: folder = '',
-} = process.env;
+import { config, assertSpacesConfig } from '../src/config.js';
 
-for (const [name, value] of Object.entries({
-  DO_SPACES_KEY: accessKeyId,
-  DO_SPACES_SECRET: secretAccessKey,
-  DO_SPACES_ENDPOINT: endpoint,
-  DO_SPACES_BUCKET: bucket,
-})) {
-  if (!value) {
-    console.error(`${name} is not set. Add it to .env first.`);
-    process.exit(1);
-  }
+try {
+  assertSpacesConfig();
+} catch (e) {
+  console.error(`${e.message} Add them to .env first.`);
+  process.exit(1);
 }
+
+const {
+  key: accessKeyId,
+  secret: secretAccessKey,
+  endpoint,
+  cdnEndpoint,
+  bucket,
+  folder,
+} = config.spaces;
 
 const targets = process.argv.slice(2);
 if (targets.length === 0) {

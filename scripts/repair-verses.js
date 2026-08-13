@@ -7,7 +7,7 @@
 // `search_text` is recomputed alongside the text, since search matches against
 // that precomputed column rather than the text itself.
 
-import 'dotenv/config';
+import { config } from '../src/config.js';
 import '../src/dns.js';
 import { MongoClient } from 'mongodb';
 
@@ -15,7 +15,7 @@ import { pad, stripPunctuation } from '../src/search-text.js';
 import { VERSE_REPAIRS, SURAH_REPAIRS } from '../src/text-repairs.js';
 
 const write = process.argv.includes('--write');
-const uri = process.env.MONGODB_URI;
+const { uri, dbName } = config.mongo;
 if (!uri) {
   console.error('MONGODB_URI is not set.');
   process.exit(1);
@@ -23,7 +23,7 @@ if (!uri) {
 
 const client = new MongoClient(uri);
 await client.connect();
-const db = client.db(process.env.MONGODB_DB);
+const db = client.db(dbName);
 const verses = db.collection('verses');
 
 let changed = 0;

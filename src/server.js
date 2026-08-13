@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import { config, assertServerConfig } from './config.js';
 import './dns.js';
 import express from 'express';
 import cors from 'cors';
@@ -14,12 +14,15 @@ import tajweed from './routes/tajweed.js';
 import mushaf from './routes/mushaf.js';
 import { connect, closeAll, ping } from './db/index.js';
 
+// Fails here, before anything binds, when the environment is incomplete.
+assertServerConfig();
+
 const app = express();
-const port = Number(process.env.PORT ?? 3000);
+const port = config.port;
 
 // Behind a proxy (Render, Fly, nginx, …) the client IP arrives in
 // X-Forwarded-For; without this every request would rate-limit as one client.
-if (process.env.TRUST_PROXY) app.set('trust proxy', Number(process.env.TRUST_PROXY));
+if (config.trustProxy) app.set('trust proxy', config.trustProxy);
 
 app.use(cors());
 app.use(morgan('dev'));
@@ -38,8 +41,8 @@ const api = express.Router();
 
 api.use(
   rateLimit({
-    windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000),
-    limit: Number(process.env.RATE_LIMIT_MAX ?? 300),
+    windowMs: config.rateLimit.windowMs,
+    limit: config.rateLimit.max,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     message: { error: 'too many requests' },

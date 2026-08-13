@@ -17,6 +17,25 @@ cp .env.example .env      # set MONGODB_URI
 npm start                 # or: npm run dev  (watch mode)
 ```
 
+### Configuration
+
+`src/config.js` reads and validates every environment variable, and nothing
+else in the project touches `process.env`. The server checks it before binding
+a port, so a missing or malformed value fails immediately with a message naming
+what is wrong rather than surfacing mid-request.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MONGODB_URI` | — | **Required.** Connection string |
+| `MONGODB_DB` | from the URI | Overrides the database name |
+| `PORT` | `3000` | Listening port; hosts usually inject this |
+| `TRUST_PROXY` | `0` | Proxy hops in front of the app — set to `1` behind a load balancer or CDN, otherwise the rate limiter treats all traffic as one client |
+| `RATE_LIMIT_MAX` | `300` | Requests per window, per IP |
+| `RATE_LIMIT_WINDOW_MS` | `60000` | Window length |
+| `DNS_SERVERS` | — | Resolver override for SRV lookups; leave unset in production |
+| `DATA_DIR` | `data` | Migration sources only |
+| `DO_SPACES_*` | — | Image upload script only; the server never needs them |
+
 ### Loading the content into MongoDB
 
 The migration reads three source files from `data/`, all gitignored (~75 MB):
@@ -211,6 +230,7 @@ shared content, so they are deliberately not served from here.
 
 ```
 src/
+  config.js            every environment variable, read and validated once
   server.js            express app, route mounting, error handling
   db/index.js          mongo connection and find/findOne helpers
   search-text.js       search normalisation shared with the migration

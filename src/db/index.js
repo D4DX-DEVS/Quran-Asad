@@ -1,15 +1,18 @@
 import { MongoClient } from 'mongodb';
 
-const uri = process.env.MONGODB_URI;
-// Undefined falls back to the database named in the connection string.
-const dbName = process.env.MONGODB_DB;
+import { config } from '../config.js';
 
-if (!uri) throw new Error('MONGODB_URI is not set');
+const { uri, dbName } = config.mongo;
 
-const client = new MongoClient(uri);
+// Built on connect() rather than at import, so a missing URI is reported by the
+// config check with everything else that is wrong, instead of throwing from
+// here the moment a route module is imported.
+let client = null;
 let db = null;
 
 export const connect = async () => {
+  if (!uri) throw new Error('MONGODB_URI is not set');
+  client = new MongoClient(uri);
   await client.connect();
   db = client.db(dbName);
   return db;
@@ -54,4 +57,6 @@ export const hasCollection = async (name) => {
   return found.length > 0;
 };
 
-export const closeAll = () => client.close();
+export const closeAll = async () => {
+  if (client) await client.close();
+};

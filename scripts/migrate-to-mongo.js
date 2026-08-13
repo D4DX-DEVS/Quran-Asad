@@ -7,7 +7,7 @@
 // The sqlite files are only needed to run this; once the data is in Mongo the
 // server never touches them again.
 
-import 'dotenv/config';
+import { config } from '../src/config.js';
 import '../src/dns.js';
 import path from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
@@ -22,10 +22,8 @@ import {
 } from '../src/search-text.js';
 import { repairVerseText, repairSurahRow } from '../src/text-repairs.js';
 
-const dataDir = process.env.DATA_DIR ?? 'data';
-const uri = process.env.MONGODB_URI;
-// Undefined falls back to the database named in the connection string.
-const dbName = process.env.MONGODB_DB;
+const dataDir = config.dataDir;
+const { uri, dbName } = config.mongo;
 
 if (!uri) {
   console.error('MONGODB_URI is not set. Add it to .env first.');
